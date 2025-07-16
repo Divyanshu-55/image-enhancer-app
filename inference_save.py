@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # App title and description
-st.title("Image Enhancement App ✨")
+st.title("Image Enhancement App")
 st.markdown(
     "Welcome to the Image Enhancement App! This application uses a pre-trained model to enhance the quality of your images. "
     "Simply upload an image, and the app will process it to improve its brightness, contrast, and overall appearance."
