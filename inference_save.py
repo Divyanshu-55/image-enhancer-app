@@ -37,6 +37,8 @@ def main(argvs):
 
     filename = "images/" + uploaded_file.name
 
+    os.makedirs("images", exist_ok=True)
+
     with open(filename, 'wb') as f: 
         f.write(bytes_data)
 
