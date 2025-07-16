@@ -1,91 +1,128 @@
-import os
+import streamlit as st
 import tensorflow as tf
 import numpy as np
-from absl import flags, app
-import time
-from data import Dataloader
 from PIL import Image
-import streamlit as st
+import os
 
-FLAGS = flags.FLAGS
+os.makedirs("result", exist_ok=True)
 
-flags.DEFINE_string("data_path", "images/*", "Path to low light image data")
-flags.DEFINE_string("model_path", "model_trained", "Path to the saved model to be loaded")
-flags.DEFINE_string("image_savepath", "result/", "Path to save the output images")
-flags.DEFINE_float("max_pixel", 255.0, "Maximum pixel value for the dataset")
-flags.DEFINE_multi_integer("resize_shape", [512,512], "Shape of the input images [H,W]")
-flags.DEFINE_integer("crop_size", 128, "Dimensions for random crop")
-flags.DEFINE_boolean("standardize", False, "standardize the data between -1 & 1?")
-flags.DEFINE_integer("prefetch", 2, "NUmber of images to prefetch for loading")
-flags.DEFINE_string("save_ext", ".png", "Extension of saved image")
-flags.DEFINE_string("tflite_savepath", None, "path to save tflite model")
-flags.DEFINE_boolean("float16", False, "Should the model be optimized to float16?")
+# Set page config
+st.set_page_config(
+    page_title="Image Enhancement App",
+    page_icon="✨",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-def main(argvs):
-    """Create/Validate image save path"""
-    if FLAGS.image_savepath and not os.path.isdir(FLAGS.image_savepath):
-        os.mkdir(FLAGS.image_savepath)
+# App title and description
+st.title("Image Enhancement App ✨")
+st.markdown(
+    "Welcome to the Image Enhancement App! This application uses a pre-trained model to enhance the quality of your images. "
+    "Simply upload an image, and the app will process it to improve its brightness, contrast, and overall appearance."
+)
+st.markdown("---")
 
-    # uploaded_file = st.file_uploader("Choose a file")
-
-    st.markdown("**Please fill the below form :**")
-    with st.form(key="Form :", clear_on_submit = True):
-        uploaded_file = st.file_uploader(label = "Upload Pic", type=["png"])
-        Submit = st.form_submit_button(label='Submit')
-    
-    bytes_data = uploaded_file.read()
-
-    filename = "images/" + uploaded_file.name
-
-    os.makedirs("images", exist_ok=True)
-
-    with open(filename, 'wb') as f: 
-        f.write(bytes_data)
+# Define constants
+MODEL_PATH = "model_trained"
+MAX_PIXEL_VAL = 255.0
+RESIZE_SHAPE = [512, 512]
 
 
-    if Submit :    
-        """Load the data"""
-        test_images = Dataloader(dataPath=FLAGS.data_path,
-                                resize_w=FLAGS.resize_shape[1],
-                                resize_h=FLAGS.resize_shape[0],
-                                cropsize=FLAGS.crop_size,
-                                max_pixel=FLAGS.max_pixel,
-                                prefetch=FLAGS.prefetch,
-                                standardize=FLAGS.standardize
-                                ).prepareTestDataset()
+@st.cache(allow_output_mutation=True)
+def load_model():
+    """Load the pre-trained model."""
+    try:
+        model = tf.saved_model.load(MODEL_PATH)
+        return model
+    except Exception as e:
+        st.error(f"Error loading the model: {e}")
+        return None
 
-        """Load the network/model"""
-        dceNet = tf.saved_model.load(FLAGS.model_path)
-        running_psnr = tf.metrics.Mean()
-        running_ssim = tf.metrics.Mean()
-        print("Running Evaluation")
-        start_time = time.time()
-        for i, data in enumerate(test_images):
-            _, out, _ = dceNet(data)
-            psnr = tf.image.psnr(out, data, max_val=1.0)
-            running_psnr.update_state(psnr)
-            ssim = tf.image.ssim(out, data, max_val=1.0)
-            running_ssim.update_state(ssim)
-            if FLAGS.image_savepath is not None:
-                out = np.uint8(out * FLAGS.max_pixel)
-                out = Image.fromarray(out[0])
-                out.save(FLAGS.image_savepath + str(i) + FLAGS.save_ext)
 
-        eval_time = time.time() - start_time
-        print("Testing Summary: Time(s):{:.0f} Average PSNR: {:.6f} Average SSIM: {:.6f}".format(eval_time,
-                                                                            running_psnr.result(), running_ssim.result()))
+def preprocess_image(image):
+    """Preprocess the uploaded image."""
+    try:
+        img = tf.convert_to_tensor(image, dtype=tf.float32)
+        img = tf.image.resize(img, RESIZE_SHAPE)
+        img = img / MAX_PIXEL_VAL
+        img = tf.expand_dims(img, axis=0)
+        return img
+    except Exception as e:
+        st.error(f"Error preprocessing the image: {e}")
+        return None
 
-    if(FLAGS.tflite_savepath is not None):
-        print("Generating TFLite model")
-        assert FLAGS.tflite_savepath.endswith(".tflite"), "The path should include the intended name of the file ending with \".tflite\""
-        converter = tf.lite.TFLiteConverter.from_saved_model(FLAGS.model_path)
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-        if(FLAGS.float16):
-            converter.target_spec.supported_types = [tf.float16]
-        tflite_model = converter.convert()
-        open(FLAGS.tflite_savepath, "wb").write(tflite_model)
 
-if __name__ == '__main__':
-    flags.mark_flag_as_required('data_path')
-    flags.mark_flag_as_required('model_path')
-    app.run(main)
+def enhance_image(model, image):
+    """Enhance the image using the loaded model."""
+    try:
+        _, enhanced_img, _ = model(image)
+        return enhanced_img
+    except Exception as e:
+        st.error(f"Error enhancing the image: {e}")
+        return None
+
+
+def postprocess_image(enhanced_img):
+    """Postprocess the enhanced image."""
+    try:
+        enhanced_img = np.uint8(enhanced_img.numpy() * MAX_PIXEL_VAL)
+        enhanced_img = Image.fromarray(enhanced_img[0])
+        return enhanced_img
+    except Exception as e:
+        st.error(f"Error postprocessing the image: {e}")
+        return None
+
+
+def main():
+    """Main function to run the Streamlit app."""
+    # Load the model
+    model = load_model()
+    if model is None:
+        return
+
+    # File uploader
+    uploaded_file = st.file_uploader(
+        "Upload an image", type=["png", "jpg", "jpeg"]
+    )
+
+    if uploaded_file is not None:
+        try:
+            # Display the uploaded image
+            original_image = Image.open(uploaded_file)
+            st.image(original_image, caption="Original Image", use_column_width=True)
+
+            # Preprocess the image
+            preprocessed_image = preprocess_image(np.array(original_image))
+            if preprocessed_image is None:
+                return
+
+            # Enhance the image
+            enhanced_image_tensor = enhance_image(model, preprocessed_image)
+            if enhanced_image_tensor is None:
+                return
+
+            # Postprocess the image
+            enhanced_image = postprocess_image(enhanced_image_tensor)
+            if enhanced_image is None:
+                return
+
+            # Display the enhanced image
+            st.image(enhanced_image, caption="Enhanced Image", use_column_width=True)
+
+            # Download button
+            enhanced_image.save("result/enhanced_image.png")
+            with open("result/enhanced_image.png", "rb") as file:
+                st.download_button(
+                    label="Download Enhanced Image",
+                    data=file,
+                    file_name="enhanced_image.png",
+                    mime="image/png",
+                )
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+
+
+if __name__ == "__main__":
+    main()
+ 
